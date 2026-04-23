@@ -49,6 +49,8 @@
 
 #include "hstdinc.h"
 
+#define HAVE_NET_IF_UTUN_H
+
 /* jbs 10/27/2007 added _SOLARIS_   silly typo fixed 01/18/08 when looked at this again */
 #if !defined(__SOLARIS__)
 
@@ -58,6 +60,12 @@
 #include "opcode.h"
 /* getopt dynamic linking kludge */
 #include "herc_getopt.h"
+
+/* utun interface on macOS */
+#if defined(HAVE_NET_IF_UTUN_H)
+#include "hercutun.h"
+#include "utun.h"
+#endif /* defined(HAVE_NET_IF_UTUN_H) */
 
 /*-------------------------------------------------------------------*/
 /* Ivan Warren 20040227                                              */
@@ -231,6 +239,9 @@ int  CTCI_Init( DEVBLK* pDEVBLK, int argc, char *argv[] )
     initialize_condition( &pDevCTCBLK->Event );
 
     // Give both Herc devices a reasonable name...
+    #if defined(HAVE_NET_IF_UTUN_H)
+    if (!pDevCTCBLK->fUtun) {
+    #endif /* defined(HAVE_NET_IF_UTUN_H) */
 
     STRLCPY( pDevCTCBLK->pDEVBLK[ CTC_READ_SUBCHANN  ]->filename, pDevCTCBLK->szTUNCharDevName );
     STRLCPY( pDevCTCBLK->pDEVBLK[ CTC_WRITE_SUBCHANN ]->filename, pDevCTCBLK->szTUNCharDevName );
@@ -248,8 +259,37 @@ int  CTCI_Init( DEVBLK* pDEVBLK, int argc, char *argv[] )
                                  pDevCTCBLK->szTUNIfName,
                                  &pDevCTCBLK->internal
                                  );
+    #if defined(HAVE_NET_IF_UTUN_H)
+    } else {
+        rc = UTUN_Initialize(&pDevCTCBLK->iUtunUnit,
+                             pDevCTCBLK->szDriveIPAddr,
+                             pDevCTCBLK->szGuestIPAddr,
+                             pDevCTCBLK->szNetMask,
+                             &pDevCTCBLK->fd);
+    }
+    #endif /* defined(HAVE_NET_IF_UTUN_H) */
 
-    if( rc < 0 ) return -1;
+
+    if( rc < 0 ) { 
+        return -1;
+    } else {
+        #if defined(HAVE_NET_IF_UTUN_H)
+        if (pDevCTCBLK->fUtun) {
+            snprintf(pDevCTCBLK->szTUNCharDevName,
+                     sizeof(pDevCTCBLK->szTUNCharDevName),
+                     HERCUTUN_IF_NAME_PREFIX "%d", pDevCTCBLK->iUtunUnit);
+            snprintf(pDevCTCBLK->szTUNIfName,
+                     sizeof(pDevCTCBLK->szTUNIfName),
+                     HERCUTUN_IF_NAME_PREFIX "%d", pDevCTCBLK->iUtunUnit);
+            snprintf(pDevCTCBLK->pDEVBLK[0]->filename,
+                     sizeof(pDevCTCBLK->pDEVBLK[0]->filename),
+                     HERCUTUN_IF_NAME_PREFIX "%d", pDevCTCBLK->iUtunUnit);
+            snprintf(pDevCTCBLK->pDEVBLK[1]->filename,
+                     sizeof(pDevCTCBLK->pDEVBLK[1]->filename),
+                     HERCUTUN_IF_NAME_PREFIX "%d", pDevCTCBLK->iUtunUnit);
+        }
+        #endif /* defined(HAVE_NET_IF_UTUN_H) */
+    }
 
     // HHC00901 "%1d:%04X %s: interface %s, type %s opened"
     WRMSG(HHC00901, "I", SSID_TO_LCSS(pDevCTCBLK->pDEVBLK[CTC_READ_SUBCHANN]->ssid), pDevCTCBLK->pDEVBLK[CTC_READ_SUBCHANN]->devnum,
@@ -320,6 +360,10 @@ int  CTCI_Init( DEVBLK* pDEVBLK, int argc, char *argv[] )
         VERIFY( TUNTAP_SetMACAddr ( pDevCTCBLK->szTUNIfName, pDevCTCBLK->szMACAddress  ) == 0 );
 #endif
 
+#if defined(HAVE_NET_IF_UTUN_H)
+    if (!pDevCTCBLK->fUtun) {
+#endif /* defined(HAVE_NET_IF_UTUN_H) */
+
 #ifdef OPTION_TUNTAP_CLRIPADDR
         VERIFY( TUNTAP_ClrIPAddr  ( pDevCTCBLK->szTUNIfName ) == 0 );
 #endif
@@ -336,8 +380,10 @@ int  CTCI_Init( DEVBLK* pDEVBLK, int argc, char *argv[] )
         VERIFY( TUNTAP_SetMTU     ( pDevCTCBLK->szTUNIfName, pDevCTCBLK->szMTU         ) == 0 );
 
         VERIFY( TUNTAP_SetFlags   ( pDevCTCBLK->szTUNIfName, nIFFlags                  ) == 0 );
-
+    
+    #if defined(HAVE_NET_IF_UTUN_H)
     }
+    #endif /* defined(HAVE_NET_IF_UTUN_H) */
 
     // Copy the fd to make panel.c happy
     pDevCTCBLK->pDEVBLK[ CTC_READ_SUBCHANN  ]->fd =
@@ -970,7 +1016,15 @@ void  CTCI_Write( DEVBLK* pDEVBLK,   U32   sCount,
         }
 
         // Write the IP packet to the TUN/TAP interface
+        #if defined(HAVE_NET_IF_UTUN_H)
+        if (pCTCBLK->fUtun) {
+            rc = UTUN_Write(pCTCBLK->fd, pSegment->bData, sDataLen);
+        } else {
+        #endif /* defined(HAVE_NET_IF_UTUN_H) */
         rc = TUNTAP_Write( pCTCBLK->fd, pSegment->bData, sDataLen );
+        #if defined(HAVE_NET_IF_UTUN_H)
+        }
+        #endif /* defined(HAVE_NET_IF_UTUN_H) */
 
         if( rc < 0 )
         {
@@ -1050,7 +1104,15 @@ static void*  CTCI_ReadThread( void* arg )
     while( pCTCBLK->fd != -1 && !pCTCBLK->fCloseInProgress )
     {
         // Read frame from the TUN/TAP interface
+        #if defined(HAVE_NET_IF_UTUN_H)
+        if (pCTCBLK->fUtun) {
+            iLength = UTUN_Read(pCTCBLK->fd, szBuff, sizeof(szBuff));
+        } else {
+        #endif /* defined(HAVE_NET_IF_UTUN_H) */
         iLength = read_tuntap( pCTCBLK->fd, szBuff, sizeof( szBuff ), DEF_NET_READ_TIMEOUT_SECS );
+        #if defined(HAVE_NET_IF_UTUN_H)
+        }
+        #endif /* defined(HAVE_NET_IF_UTUN_H) */
 
         // Check for error condition
         if( iLength < 0 )
@@ -1205,6 +1267,10 @@ static int  ParseArgs( DEVBLK* pDEVBLK, PCTCBLK pCTCBLK,
     int             iKernBuff;
     int             iIOBuff;
 #endif
+#if defined(HAVE_NET_IF_UTUN_H)
+    char            *pzEndPtr = NULL;
+    long            lUtunUnitArg;
+#endif /* HAVE_NET_IF_UTUN_H */
     char          *argn[MAX_ARGS];
     char         **argv = argn;
 
@@ -1273,6 +1339,10 @@ static int  ParseArgs( DEVBLK* pDEVBLK, PCTCBLK pCTCBLK,
 
 #if defined( OPTION_W32_CTCI )
   #define  CTCI_OPTSTRING  "n:k:i:m:t:s:d"
+
+#elif defined(HAVE_NET_IF_UTUN_H)
+  #define  CTCI_OPTSTRING  "n:x:u:t:s:d"
+
 #else
   #define  CTCI_OPTSTRING  "n:x:t:s:d"
 #endif
@@ -1292,6 +1362,9 @@ static int  ParseArgs( DEVBLK* pDEVBLK, PCTCBLK pCTCBLK,
             { "ibuff",   required_argument, NULL, 'i' },
             { "mac",     required_argument, NULL, 'm' },
 #endif
+#if defined(HAVE_NET_IF_UTUN_H)
+            { "utun",    1, NULL, 'u' },
+#endif /* defined(HAVE_NET_IF_UTUN_H) */
             { "mtu",     required_argument, NULL, 't' },
             { "netmask", required_argument, NULL, 's' },
             { "debug",   no_argument,       NULL, 'd' },
@@ -1341,7 +1414,7 @@ static int  ParseArgs( DEVBLK* pDEVBLK, PCTCBLK pCTCBLK,
             break;
 
 #if !defined( OPTION_W32_CTCI )
-
+#if !defined(HAVE_NET_IF_UTUN_H)
         case 'x':     // TUN network interface name
 
             if (strlen( optarg ) > sizeof( pCTCBLK->szTUNIfName )-1)
@@ -1355,6 +1428,7 @@ static int  ParseArgs( DEVBLK* pDEVBLK, PCTCBLK pCTCBLK,
             STRLCPY( pCTCBLK->szTUNIfName, optarg );
             saw_if = 1;
             break;
+#endif //(!HAVE_NET_IF_UTUN_H)
 #endif
 
 #if defined( OPTION_W32_CTCI )
@@ -1411,6 +1485,23 @@ static int  ParseArgs( DEVBLK* pDEVBLK, PCTCBLK pCTCBLK,
 
 #endif // defined( OPTION_W32_CTCI )
 
+#if defined(HAVE_NET_IF_UTUN_H)
+        case 'u':     // Use a utun interface (macOS), not a tun(4) device
+            if (strcmp("auto", optarg) == 0) {
+                pCTCBLK->iUtunUnit = -1;
+            } else {
+                lUtunUnitArg = strtol(optarg, &pzEndPtr, 10);
+                if (*pzEndPtr != '\0' ||
+                    lUtunUnitArg > INT_MAX || lUtunUnitArg < 0) {
+                    WRMSG(HHCCT081E, "E", pDEVBLK->devnum, optarg);
+                    return -1;
+                }
+                pCTCBLK->iUtunUnit = (int)lUtunUnitArg;
+            }
+            pCTCBLK->fUtun = TRUE;
+            break;
+#endif /* defined(HAVE_NET_IF_UTUN_H) */
+
         case 't':     // MTU of point-to-point link (ignored if Windows)
 
             iMTU = atoi( optarg );
@@ -1450,6 +1541,12 @@ static int  ParseArgs( DEVBLK* pDEVBLK, PCTCBLK pCTCBLK,
             break;
         }
     }
+
+#if defined(HAVE_NET_IF_UTUN_H)  //MBC-2025-09-12 (Forcando o modo UTUN)
+            pCTCBLK->iUtunUnit = -1;
+            //pCTCBLK->iUtunUnit = 2;
+            pCTCBLK->fUtun = TRUE;
+#endif //(HAVE_NET_IF_UTUN_H)
 
     // Shift past any options
     argc -= optind;
