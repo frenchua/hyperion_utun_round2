@@ -259,7 +259,7 @@ bin_PROGRAMS = \
   $(HERCIFC)   \
   $(HERCLIN)
 
-EXTRA_PROGRAMS = hercifc
+EXTRA_PROGRAMS = hercifc hercutun
 
 #----------------------------------------------------------------------------
 # For each module:
@@ -603,6 +603,10 @@ hercifc_SOURCES    = hercifc.c
 hercifc_LDADD      = $(tools_ADDLIBS)
 hercifc_LDFLAGS    = $(tools_LD_FLAGS)
 endif
+
+hercutun_SOURCES = hercutun.c
+hercutun_LDADD = $(tools_ADDLIBS)
+hercutun_LDFLAGS = $(tools_LD_FLAGS)
 
 dasdinit_SOURCES   = dasdinit.c
 dasdinit_LDADD     = $(tools_ADDLIBS)
@@ -1064,6 +1068,7 @@ noinst_HEADERS =          \
   hdl.h                   \
   herc_getopt.h           \
   hercifc.h               \
+  hercutun.h              \
   hercules.h              \
   hercwind.h              \
   herror.h                \
